@@ -8,8 +8,8 @@ import java.awt.RenderingHints;
 import javax.swing.JComponent;
 
 /**
- * A thin rounded progress bar. Used both for a task's wiki completion rate and for the
- * player's own progress through a boss or tier.
+ * A thin rounded progress bar. Used for the player's own progress through a boss or tier, and
+ * painted directly by task rows (through {@link #paint}) for a task's wiki completion rate.
  */
 class RateBar extends JComponent
 {
@@ -46,19 +46,23 @@ class RateBar extends JComponent
 	@Override
 	protected void paintComponent(Graphics g)
 	{
+		int h = Math.min(getHeight(), height);
+		paint((Graphics2D) g, 0, (getHeight() - h) / 2, getWidth(), h, fraction, fill, track);
+	}
+
+	/** Paints a bar at ({@code x}, {@code y}); a negative fraction draws only the track. */
+	static void paint(Graphics2D g, int x, int y, int w, int h, double fraction, Color fill, Color track)
+	{
 		Graphics2D g2 = (Graphics2D) g.create();
 		g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-		int w = getWidth();
-		int h = Math.min(getHeight(), height);
-		int y = (getHeight() - h) / 2;
 		g2.setColor(track);
-		g2.fillRoundRect(0, y, w, h, h, h);
+		g2.fillRoundRect(x, y, w, h, h, h);
 		if (fraction > 0)
 		{
 			int fw = (int) Math.round(w * Math.min(1.0, fraction));
 			fw = Math.max(fw, h);
 			g2.setColor(fill);
-			g2.fillRoundRect(0, y, fw, h, h, h);
+			g2.fillRoundRect(x, y, fw, h, h, h);
 		}
 		g2.dispose();
 	}

@@ -8,6 +8,7 @@ import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -77,9 +78,9 @@ class LookupPanel extends PluginPanel
 	private final Map<String, String> bossToLabel = new HashMap<>();
 	/** Rows currently shown, by task id. */
 	private final Map<Integer, TaskRow> rowsById = new HashMap<>();
-	/** Every row built for the current boss, so sorting and filtering reuse them instead of rebuilding. */
+	/** Every row built so far, by task id; rows are kept for the session and only re-attached. */
 	private final Map<Integer, TaskRow> rowCache = new HashMap<>();
-	/** Sections for the current boss; kept between filter and sort changes. */
+	/** One section per tier, created with the panel. */
 	private final Map<TaskTier, TierSection> sectionsByTier = new EnumMap<>(TaskTier.class);
 	/** Every task of the current boss per tier, in the current sort order. */
 	private final Map<TaskTier, List<CombatTask>> tierTasks = new EnumMap<>(TaskTier.class);
@@ -215,10 +216,17 @@ class LookupPanel extends PluginPanel
 		notice.setVisible(false);
 		content.add(notice);
 
-		// Sections
+		// Sections: one per tier, hidden when the boss has no tasks in it
 		sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
 		sections.setOpaque(false);
 		sections.setAlignmentX(Component.LEFT_ALIGNMENT);
+		for (TaskTier tier : TaskTier.values())
+		{
+			TierSection section = new TierSection(tier, this, theme);
+			section.setVisible(false);
+			sectionsByTier.put(tier, section);
+			sections.add(section);
+		}
 		content.add(sections);
 
 		// Hint shown before the first lookup
@@ -299,8 +307,6 @@ class LookupPanel extends PluginPanel
 		{
 			expanded.clear();
 			collapsed.clear();
-			rowCache.clear();
-			sectionsByTier.clear();
 			header.setPortrait(null);
 			if (autoCollapseFinished && view.isLoggedIn())
 			{
@@ -520,18 +526,44 @@ class LookupPanel extends PluginPanel
 	}
 
 	/**
+	 * Runs a bulk row change with the sections hidden. AWT's heavyweight mixing (the game canvas
+	 * shares the window) is quadratic in rows removed or toggled under a showing parent; under a
+	 * hidden one it is a no-op, and nothing is painted before the sections are shown again.
+	 */
+	private void bulkChange(Runnable change)
+	{
+		boolean wasVisible = sections.isVisible();
+		sections.setVisible(false);
+		try
+		{
+			change.run();
+		}
+		finally
+		{
+			sections.setVisible(wasVisible);
+		}
+	}
+
+	/**
 	 * Full pass: attaches every row of the current boss to its tier section in the current sort
 	 * order, then applies the filter. Needed when the boss, the sort or the rates change.
 	 */
 	private void rebuild()
 	{
-		sections.removeAll();
 		rowsById.clear();
 		tierTasks.clear();
 		notice.setVisible(false);
 
 		if (view == null)
 		{
+			bulkChange(() ->
+			{
+				for (TierSection section : sectionsByTier.values())
+				{
+					section.setRows(Collections.emptyList());
+					section.setVisible(false);
+				}
+			});
 			revalidate();
 			repaint();
 			return;
@@ -570,45 +602,50 @@ class LookupPanel extends PluginPanel
 		Map<TaskTier, List<CombatTask>> ordered = TaskArranger.arrange(tasks, completed, rates,
 			TaskArranger.Filter.ALL, sort);
 
-		for (Map.Entry<TaskTier, List<CombatTask>> entry : ordered.entrySet())
+		bulkChange(() ->
 		{
-			TaskTier tier = entry.getKey();
-			tierTasks.put(tier, entry.getValue());
-			TierSection section = sectionsByTier.get(tier);
-			if (section == null)
+			for (Map.Entry<TaskTier, TierSection> entry : sectionsByTier.entrySet())
 			{
-				section = new TierSection(tier, this, theme);
-				sectionsByTier.put(tier, section);
+				TaskTier tier = entry.getKey();
+				TierSection section = entry.getValue();
+				List<CombatTask> tierList = ordered.get(tier);
+				if (tierList == null)
+				{
+					section.setRows(Collections.emptyList());
+					section.setVisible(false);
+					continue;
+				}
+				tierTasks.put(tier, tierList);
+				List<TaskRow> rows = new ArrayList<>(tierList.size());
+				for (CombatTask task : tierList)
+				{
+					TaskRow row = rowCache.get(task.getId());
+					if (row == null)
+					{
+						row = new TaskRow(task, this, theme, allBosses);
+						rowCache.put(task.getId(), row);
+					}
+					row.setShowBoss(allBosses);
+					row.setCompletion(completed.contains(task.getId()) && loggedIn, !loggedIn);
+					row.setRate(rates.rateFor(task.getId()));
+					row.setProgress(view.getProgress().get(task.getId()));
+					boolean open = expanded.contains(task.getId());
+					if (open != row.isExpanded())
+					{
+						row.setExpanded(open);
+					}
+					if (open)
+					{
+						fillSummary(row);
+					}
+					rowsById.put(task.getId(), row);
+					rows.add(row);
+				}
+				section.setRows(rows);
+				section.setCollapsed(collapsed.contains(tier));
+				section.setVisible(true);
 			}
-			List<TaskRow> rows = new ArrayList<>(entry.getValue().size());
-			for (CombatTask task : entry.getValue())
-			{
-				TaskRow row = rowCache.get(task.getId());
-				if (row == null)
-				{
-					row = new TaskRow(task, this, theme, allBosses);
-					rowCache.put(task.getId(), row);
-				}
-				row.setCompletion(completed.contains(task.getId()) && loggedIn, !loggedIn);
-				row.setRate(rates.rateFor(task.getId()));
-				row.setProgress(view.getProgress().get(task.getId()));
-				boolean open = expanded.contains(task.getId());
-				if (open != row.isExpanded())
-				{
-					row.setExpanded(open);
-				}
-				if (open)
-				{
-					fillSummary(row);
-				}
-				rowsById.put(task.getId(), row);
-				rows.add(row);
-			}
-			section.setRows(rows);
-			section.setCollapsed(collapsed.contains(tier));
-			sections.add(section);
-			sections.add(Box.createVerticalStrut(4));
-		}
+		});
 
 		if (ordered.isEmpty())
 		{
@@ -634,15 +671,18 @@ class LookupPanel extends PluginPanel
 		boolean loggedIn = view.isLoggedIn();
 		updateHeader();
 		Predicate<CombatTask> show = task -> TaskArranger.matches(task, completed, filter);
-		for (Map.Entry<TaskTier, TierSection> e : sectionsByTier.entrySet())
+		bulkChange(() ->
 		{
-			List<CombatTask> tierAll = tierTasks.get(e.getKey());
-			if (tierAll == null)
+			for (Map.Entry<TaskTier, TierSection> e : sectionsByTier.entrySet())
 			{
-				continue;
+				List<CombatTask> tierAll = tierTasks.get(e.getKey());
+				if (tierAll == null)
+				{
+					continue;
+				}
+				e.getValue().applyFilter(show, TaskArranger.countDone(tierAll, completed), tierAll.size(), filter, loggedIn);
 			}
-			e.getValue().applyFilter(show, TaskArranger.countDone(tierAll, completed), tierAll.size(), filter, loggedIn);
-		}
+		});
 		revalidate();
 		repaint();
 	}

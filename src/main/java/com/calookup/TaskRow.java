@@ -1,21 +1,25 @@
 package com.calookup;
 
-import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.Insets;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
@@ -27,9 +31,9 @@ import net.runelite.client.ui.PluginPanel;
  * completion rate. Clicking it opens the in-game description, the wiki summary and a button
  * to open the full page.
  * <p>
- * Rows are cheap to build on purpose: the "(All)" view creates several hundred of them. The
- * detail area is only built the first time a row is expanded, the type line is plain text, and
- * the title only uses a wrapping HTML label when it is too long to fit on one line.
+ * The "(All)" view holds one row per task in the game, so the row head is a single painted
+ * component whose text goes through a shared {@link JLabel} to match the panel's other labels.
+ * The detail area is only built the first time a row is expanded.
  */
 class TaskRow extends JPanel
 {
@@ -40,17 +44,27 @@ class TaskRow extends JPanel
 	/** Space left below each row instead of a separate spacer component. */
 	private static final int GAP = 3;
 
+	private static final int MARK_GAP = 6;
+	private static final int RATE_WIDTH = 44;
+	private static final int RATE_GAP = 6;
+	private static final int BAR_HEIGHT = 5;
+	private static final int BAR_GAP = 2;
+	private static final int PROGRESS_GAP = 1;
+
+	/** Shared labels that paint every row's text. */
+	private static final JLabel TEXT_STAMP = stamp();
+	private static final JLabel RATE_STAMP = stamp();
+
 	private final CombatTask task;
 	private final LookupPanel owner;
 	private final MouseAdapter clicks;
+	private final Head head = new Head();
 
-	private final JPanel head = new JPanel(new BorderLayout(6, 0));
-	private final StatusMark mark;
-	private final JLabel name = new JLabel();
-	private final JLabel type = new JLabel();
-	private final RateBar rateBar;
-	private final JLabel rateLabel = new JLabel("", SwingConstants.RIGHT);
-	private final JLabel progressLabel = new JLabel();
+	private final Font nameFont = FontManager.getRunescapeBoldFont();
+	private final Font smallFont = FontManager.getRunescapeSmallFont();
+	private final int nameHeight;
+	private final int smallHeight;
+	private final String[] nameLines;
 
 	// Built lazily by ensureDetails()
 	private JPanel details;
@@ -63,12 +77,24 @@ class TaskRow extends JPanel
 
 	private Theme theme;
 	private Color background;
+	private boolean showBoss;
 	private String typeText = "";
+	private String rateText = "";
+	private String rateTip;
+	private double rateFraction = -1;
 	private TaskProgress progress;
 	private boolean done;
 	private boolean unknown;
 	private boolean expanded;
 	private boolean hover;
+
+	private static JLabel stamp()
+	{
+		JLabel label = new JLabel();
+		label.setOpaque(false);
+		label.setDoubleBuffered(false);
+		return label;
+	}
 
 	@Override
 	protected void paintComponent(Graphics g)
@@ -89,6 +115,7 @@ class TaskRow extends JPanel
 		this.task = task;
 		this.owner = owner;
 		this.theme = theme;
+		this.showBoss = showBoss;
 
 		setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
 		// The bottom 3 px is the gap to the next row; the background is painted above it.
@@ -97,50 +124,13 @@ class TaskRow extends JPanel
 		setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 		setOpaque(false);
 
-		mark = new StatusMark(theme.tierColor(task.getTier()), theme.getMuted());
+		FontMetrics nameMetrics = getFontMetrics(nameFont);
+		nameHeight = nameMetrics.getHeight();
+		smallHeight = getFontMetrics(smallFont).getHeight();
+		nameLines = wrap(task.getName(), nameMetrics, NAME_WIDTH);
 
-		// Head: mark | name + type | rate
-		head.setOpaque(false);
 		head.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-		JPanel markWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
-		markWrap.setOpaque(false);
-		markWrap.add(mark);
-		head.add(markWrap, BorderLayout.WEST);
-
-		JPanel middle = new JPanel();
-		middle.setOpaque(false);
-		middle.setLayout(new BoxLayout(middle, BoxLayout.Y_AXIS));
-		name.setFont(FontManager.getRunescapeBoldFont());
-		name.setAlignmentX(Component.LEFT_ALIGNMENT);
-		type.setFont(FontManager.getRunescapeSmallFont());
-		type.setAlignmentX(Component.LEFT_ALIGNMENT);
-		middle.add(name);
-		middle.add(type);
-		head.add(middle, BorderLayout.CENTER);
-
-		JPanel rateWrap = new JPanel();
-		rateWrap.setOpaque(false);
-		rateWrap.setLayout(new BoxLayout(rateWrap, BoxLayout.Y_AXIS));
-		rateLabel.setFont(FontManager.getRunescapeSmallFont());
-		rateLabel.setAlignmentX(Component.RIGHT_ALIGNMENT);
-		rateBar = new RateBar(5, theme.tierColor(task.getTier()), theme.getTrack());
-		rateBar.setPreferredSize(new Dimension(44, 5));
-		rateBar.setMaximumSize(new Dimension(44, 5));
-		rateBar.setAlignmentX(Component.RIGHT_ALIGNMENT);
-		rateWrap.add(rateLabel);
-		rateWrap.add(Box.createVerticalStrut(2));
-		rateWrap.add(rateBar);
-		head.add(rateWrap, BorderLayout.EAST);
-
 		add(head);
-
-		// Kill count / PB line, only shown when there is something to say
-		progressLabel.setFont(FontManager.getRunescapeSmallFont());
-		progressLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
-		progressLabel.setBorder(BorderFactory.createEmptyBorder(1, 20, 0, 0));
-		progressLabel.setVisible(false);
-		add(progressLabel);
 
 		clicks = new MouseAdapter()
 		{
@@ -166,34 +156,64 @@ class TaskRow extends JPanel
 		};
 		addMouseListener(clicks);
 		head.addMouseListener(clicks);
-		middle.addMouseListener(clicks);
-		markWrap.addMouseListener(clicks);
-		rateWrap.addMouseListener(clicks);
-		name.addMouseListener(clicks);
-		type.addMouseListener(clicks);
-		progressLabel.addMouseListener(clicks);
 
-		// Title: plain when it fits, wrapping HTML only when it would be cut off.
-		Font nameFont = name.getFont();
-		if (name.getFontMetrics(nameFont).stringWidth(task.getName()) <= NAME_WIDTH)
-		{
-			name.setText(task.getName());
-		}
-		else
-		{
-			name.setText(htmlNarrow(escape(task.getName())));
-		}
-		name.setToolTipText(task.getName());
+		updateTypeLine();
+		paintState();
+	}
 
+	/** Breaks a title into lines that fit the width, at spaces. */
+	static String[] wrap(String text, FontMetrics metrics, int width)
+	{
+		if (metrics.stringWidth(text) <= width)
+		{
+			return new String[]{text};
+		}
+		List<String> lines = new ArrayList<>(3);
+		StringBuilder line = new StringBuilder();
+		for (String word : text.split(" "))
+		{
+			if (line.length() == 0)
+			{
+				line.append(word);
+			}
+			else if (metrics.stringWidth(line + " " + word) <= width)
+			{
+				line.append(' ').append(word);
+			}
+			else
+			{
+				lines.add(line.toString());
+				line.setLength(0);
+				line.append(word);
+			}
+		}
+		if (line.length() > 0)
+		{
+			lines.add(line.toString());
+		}
+		return lines.toArray(new String[0]);
+	}
+
+	/** Names the boss on the type line, for the "(All)" view where rows of many bosses are mixed. */
+	void setShowBoss(boolean showBoss)
+	{
+		if (this.showBoss == showBoss)
+		{
+			return;
+		}
+		this.showBoss = showBoss;
+		updateTypeLine();
+		head.repaint();
+	}
+
+	private void updateTypeLine()
+	{
 		int points = task.getTier().getPoints();
 		typeText = task.getType().getLabel() + "  ·  " + points + (points == 1 ? " pt" : " pts");
 		if (showBoss)
 		{
 			typeText += "  ·  " + task.getBoss();
 		}
-		type.setText(typeText);
-		type.setToolTipText(typeText);
-		paintState();
 	}
 
 	/**
@@ -208,16 +228,11 @@ class TaskRow extends JPanel
 		{
 			return;
 		}
+		boolean heightChanged = (progress == null) != (this.progress == null);
 		this.progress = progress;
-		if (progress == null)
+		if (heightChanged)
 		{
-			progressLabel.setVisible(false);
-		}
-		else
-		{
-			progressLabel.setText(progress.getText());
-			progressLabel.setToolTipText(progress.isMet() ? "Target met" : "From your kill counts and personal bests");
-			progressLabel.setVisible(true);
+			head.revalidate();
 		}
 		paintState();
 	}
@@ -230,12 +245,6 @@ class TaskRow extends JPanel
 	private static String html(String body)
 	{
 		return "<html><body style='width: " + TEXT_WIDTH + "pt'>" + body + "</body></html>";
-	}
-
-	/** Wrapping label for the title, which shares its line with the mark and the rate. */
-	private static String htmlNarrow(String body)
-	{
-		return "<html><body style='width: " + NAME_WIDTH + "pt'>" + body + "</body></html>";
 	}
 
 	private static String escape(String s)
@@ -304,8 +313,6 @@ class TaskRow extends JPanel
 	void setTheme(Theme theme)
 	{
 		this.theme = theme;
-		mark.setColors(theme.tierColor(task.getTier()), theme.getMuted());
-		rateBar.setColors(theme.tierColor(task.getTier()), theme.getTrack());
 		paintState();
 	}
 
@@ -317,7 +324,6 @@ class TaskRow extends JPanel
 		}
 		this.done = done;
 		this.unknown = unknown;
-		mark.setState(done, unknown);
 		paintState();
 	}
 
@@ -325,16 +331,17 @@ class TaskRow extends JPanel
 	{
 		if (rate == null)
 		{
-			rateLabel.setText("n/a");
-			rateLabel.setToolTipText("The wiki has no completion rate for this task");
-			rateBar.setFraction(-1);
+			rateText = "n/a";
+			rateTip = "The wiki has no completion rate for this task";
+			rateFraction = -1;
 		}
 		else
 		{
-			rateLabel.setText(String.format(Locale.ROOT, rate >= 10 ? "%.0f%%" : "%.1f%%", rate));
-			rateLabel.setToolTipText(String.format(Locale.ROOT, "%.1f%% of players have completed this task", rate));
-			rateBar.setFraction(rate / 100.0);
+			rateText = String.format(Locale.ROOT, rate >= 10 ? "%.0f%%" : "%.1f%%", rate);
+			rateTip = String.format(Locale.ROOT, "%.1f%% of players have completed this task", rate);
+			rateFraction = rate / 100.0;
 		}
+		head.repaint();
 	}
 
 	void setExpanded(boolean expanded)
@@ -399,14 +406,14 @@ class TaskRow extends JPanel
 		wikiStrategy.setVisible(false);
 	}
 
+	private String rowTip()
+	{
+		return done ? "Completed" : (unknown ? "Log in to see whether you have completed this task" : "Not completed yet");
+	}
+
 	private void paintState()
 	{
 		background = expanded ? theme.getCardOpen() : (hover ? theme.getCardHover() : theme.getCard());
-
-		name.setForeground(done ? theme.getMuted() : theme.getText());
-		type.setForeground(theme.getMuted());
-		progressLabel.setForeground(progress != null && progress.isMet() ? theme.tierColor(TaskTier.EASY) : theme.getMuted());
-		rateLabel.setForeground(done ? theme.getMuted() : theme.getText());
 		if (details != null)
 		{
 			description.setForeground(theme.getText());
@@ -417,7 +424,141 @@ class TaskRow extends JPanel
 			openWiki.setBackground(theme.getCardHover());
 			openWiki.setForeground(theme.getText());
 		}
-		setToolTipText(done ? "Completed" : (unknown ? "Log in to see whether you have completed this task" : "Not completed yet"));
+		String tip = rowTip();
+		setToolTipText(tip);
+		head.setToolTipText(tip);
 		repaint();
+	}
+
+	/** Title lines and type line beside the mark and rate column, plus the progress line. */
+	private int headHeight()
+	{
+		int text = nameLines.length * nameHeight + smallHeight;
+		int rate = smallHeight + BAR_GAP + BAR_HEIGHT;
+		int h = Math.max(Math.max(text, rate), StatusMark.SIZE);
+		if (progress != null)
+		{
+			h += PROGRESS_GAP + smallHeight;
+		}
+		return h;
+	}
+
+	/** Paints one line of text through a shared label. */
+	private static void stamp(JLabel stamp, Graphics2D g, String text, Font font, Color color, int align,
+		int x, int y, int w, int h)
+	{
+		if (w <= 0 || h <= 0)
+		{
+			return;
+		}
+		stamp.setFont(font);
+		stamp.setForeground(color);
+		stamp.setHorizontalAlignment(align);
+		stamp.setText(text);
+		if (stamp.getWidth() != w || stamp.getHeight() != h)
+		{
+			stamp.setSize(w, h);
+		}
+		Graphics2D cg = (Graphics2D) g.create(x, y, w, h);
+		try
+		{
+			stamp.paint(cg);
+		}
+		finally
+		{
+			cg.dispose();
+		}
+	}
+
+	/** The single painted component that is the row head. */
+	private final class Head extends JComponent
+	{
+		Head()
+		{
+			setOpaque(false);
+		}
+
+		@Override
+		public Dimension getPreferredSize()
+		{
+			return new Dimension(INNER_WIDTH - 12, headHeight());
+		}
+
+		@Override
+		public Dimension getMinimumSize()
+		{
+			return new Dimension(StatusMark.SIZE + MARK_GAP + RATE_GAP + RATE_WIDTH, headHeight());
+		}
+
+		@Override
+		public Dimension getMaximumSize()
+		{
+			return new Dimension(Short.MAX_VALUE, headHeight());
+		}
+
+		/** Each part of the head has its own tooltip. */
+		@Override
+		public String getToolTipText(MouseEvent e)
+		{
+			int x = e.getX();
+			int y = e.getY();
+			int textX = StatusMark.SIZE + MARK_GAP;
+			int nameBottom = nameLines.length * nameHeight;
+			int typeBottom = nameBottom + smallHeight;
+			if (progress != null && x >= textX && y >= typeBottom + PROGRESS_GAP && y < typeBottom + PROGRESS_GAP + smallHeight)
+			{
+				return progress.isMet() ? "Target met" : "From your kill counts and personal bests";
+			}
+			if (x >= getWidth() - RATE_WIDTH - RATE_GAP / 2 && y < typeBottom)
+			{
+				return rateTip;
+			}
+			if (x >= textX)
+			{
+				if (y < nameBottom)
+				{
+					return task.getName();
+				}
+				if (y < typeBottom)
+				{
+					return typeText;
+				}
+			}
+			return rowTip();
+		}
+
+		@Override
+		protected void paintComponent(Graphics g)
+		{
+			Graphics2D g2 = (Graphics2D) g;
+			int w = getWidth();
+			int textX = StatusMark.SIZE + MARK_GAP;
+			int textW = w - textX - RATE_GAP - RATE_WIDTH;
+			int rateX = w - RATE_WIDTH;
+			Color tierColor = theme.tierColor(task.getTier());
+			Color muted = theme.getMuted();
+
+			StatusMark.paint(g2, 0, 0, done, unknown, tierColor, muted);
+
+			int y = 0;
+			Color nameColor = done ? muted : theme.getText();
+			for (String line : nameLines)
+			{
+				stamp(TEXT_STAMP, g2, line, nameFont, nameColor, SwingConstants.LEFT, textX, y, textW, nameHeight);
+				y += nameHeight;
+			}
+			stamp(TEXT_STAMP, g2, typeText, smallFont, muted, SwingConstants.LEFT, textX, y, textW, smallHeight);
+			y += smallHeight;
+			if (progress != null)
+			{
+				y += PROGRESS_GAP;
+				Color color = progress.isMet() ? theme.tierColor(TaskTier.EASY) : muted;
+				stamp(TEXT_STAMP, g2, progress.getText(), smallFont, color, SwingConstants.LEFT, textX, y, w - textX, smallHeight);
+			}
+
+			stamp(RATE_STAMP, g2, rateText, smallFont, done ? muted : theme.getText(), SwingConstants.RIGHT,
+				rateX, 0, RATE_WIDTH, smallHeight);
+			RateBar.paint(g2, rateX, smallHeight + BAR_GAP, RATE_WIDTH, BAR_HEIGHT, rateFraction, tierColor, theme.getTrack());
+		}
 	}
 }

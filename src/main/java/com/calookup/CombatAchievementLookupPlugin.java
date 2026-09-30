@@ -47,8 +47,8 @@ import net.runelite.client.util.LinkBrowser;
  */
 @Slf4j
 @PluginDescriptor(
-	name = "CA Lookup",
-	description = "Right-click a boss for CA Lookup: its Combat Achievements by tier, wiki completion rates, your progress and quick wiki guides",
+	name = "CA Lookup: Combat Achievements",
+	description = "The complete Combat Achievements (CA) companion. Right-click any boss or monster for its tasks by tier, wiki completion rates, your live progress with kill counts and personal bests, and quick wiki guides",
 	tags = {"combat", "achievements", "achievement", "ca", "cas", "tasks", "boss", "bosses", "pvm", "wiki", "lookup", "guide", "tier", "progress"}
 )
 public class CombatAchievementLookupPlugin extends Plugin

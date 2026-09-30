@@ -10,11 +10,12 @@ import javax.swing.JComponent;
 
 /**
  * A small circle: hollow while a task is still to do, filled with a tick once it is done, and
- * a dotted ring when completion is unknown because the player is logged out.
+ * a dotted ring when completion is unknown because the player is logged out. Task rows paint it
+ * directly through {@link #paint}.
  */
 class StatusMark extends JComponent
 {
-	private static final int SIZE = 14;
+	static final int SIZE = 14;
 
 	private boolean done;
 	private boolean unknown;
@@ -49,11 +50,17 @@ class StatusMark extends JComponent
 	@Override
 	protected void paintComponent(Graphics g)
 	{
+		paint((Graphics2D) g, (getWidth() - SIZE) / 2, (getHeight() - SIZE) / 2, done, unknown, color, ring);
+	}
+
+	/** Paints the mark in a {@link #SIZE} square with its top-left corner at ({@code x}, {@code y}). */
+	static void paint(Graphics2D g, int x, int y, boolean done, boolean unknown, Color color, Color ring)
+	{
 		Graphics2D g2 = (Graphics2D) g.create();
 		g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 		int d = SIZE - 2;
-		int x = (getWidth() - d) / 2;
-		int y = (getHeight() - d) / 2;
+		x += 1;
+		y += 1;
 		if (done)
 		{
 			g2.setColor(color);

@@ -1,6 +1,6 @@
-# CA Lookup
+# CA Lookup: Combat Achievements
 
-A RuneLite plugin that adds **CA Lookup** to the right-click menu of every boss and monster that has Combat Achievements.
+The complete Combat Achievements companion for RuneLite. It adds **CA Lookup** to the right-click menu of every boss and monster that has Combat Achievements.
 
 Pick the option and the side panel shows that boss's tasks grouped by tier, the share of players who have completed each one according to the Old School RuneScape Wiki, a tick next to the ones you have already done, your own kill count or personal best where a task has a target, and a short wiki guide for any task you click.
 

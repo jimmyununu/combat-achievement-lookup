@@ -55,6 +55,8 @@ class TierSection extends JPanel
 		setOpaque(false);
 		setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
 		setAlignmentX(Component.LEFT_ALIGNMENT);
+		// Gap to the next section
+		setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
 
 		header.setBorder(BorderFactory.createEmptyBorder(6, 4, 4, 6));
 		header.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -126,9 +128,26 @@ class TierSection extends JPanel
 		repaint();
 	}
 
-	/** Attaches every row of this tier in display order. Rows keep their own spacing. */
+	/** Attaches every row of this tier in display order; a no-op when nothing changed. */
 	void setRows(List<TaskRow> ordered)
 	{
+		Component[] current = rows.getComponents();
+		if (current.length == ordered.size())
+		{
+			boolean same = true;
+			for (int i = 0; i < current.length; i++)
+			{
+				if (current[i] != ordered.get(i))
+				{
+					same = false;
+					break;
+				}
+			}
+			if (same)
+			{
+				return;
+			}
+		}
 		rows.removeAll();
 		for (TaskRow row : ordered)
 		{
